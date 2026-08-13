@@ -1,0 +1,43 @@
+# Makefile
+CC = gcc
+
+# Compiler flags
+CFLAGS = -Wall -Werror -I /usr/share/python/python/python
+
+# Target flags
+TARGET = my_app
+
+# Include directories
+INCLUDE_DIRS = /usr/share/python/python
+
+# Linker flags
+LDFLAGS = -lpthread
+
+# Target
+$(TARGET): $(INCLUDE_DIRS) $(LDFLAGS) $(CFLAGS)
+$(TARGET): $(INCLUDE_DIRS) $(LDFLAGS) $(CFLAGS) $(TARGET)
+
+# Make the target
+$(TARGET): $(CFLAGS)
+        $(CC) $(CFLAGS) $(TARGET)
+
+# Make the include directories
+$(INCLUDE_DIRS): $(INCLUDE_DIRS)
+        $(CC) $(CFLAGS) $(INCLUDE_DIRS)
+
+# Make the linker flags
+$(LDFLAGS): $(LDFLAGS)
+        $(CC) $(CFLAGS) $(LDFLAGS) $(TARGET)
+
+# Make the target
+$(LDFLAGS): $(LDFLAGS)
+        $(CC) $(CFLAGS) $(LDFLAGS) $(TARGET)
+
+# Clean
+clean:
+        $(CC) $(CFLAGS) $(INCLUDE_DIRS) $(LDFLAGS) $(CFLAGS) $(TARGET) -k
+
+# Generate the Makefile
+$(TARGET): $(CFLAGS)
+        $(CC) -c $(CFLAGS) -o $(TARGET) $(CFLAGS) -I /usr/share/python/python
+
