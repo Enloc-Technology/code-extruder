@@ -22,6 +22,16 @@ typedef struct {
     Target target;
 } Input;
 
+typedef enum {
+    DEFAULT_PATIENT = 1u << 0,
+    DEFAULT_SEVERITY = 1u << 1,
+    DEFAULT_SULKING = 1u << 2,
+    DEFAULT_TARGET = 1u << 3
+} DefaultField;
+
+typedef void (*DefaultsNotificationHook)(unsigned int default_fields,
+                                         void *context);
+
 static bool valid_id(const char *text) {
     size_t length;
 
@@ -58,19 +68,22 @@ static bool parse_severity(const char *text, float *severity) {
     return true;
 }
 
-static bool parse_source(const char *source, Input *input) {
+static bool parse_source(const char *source, Input *input,
+                         DefaultsNotificationHook defaults_hook,
+                         void *hook_context) {
     char buffer[MAX_SOURCE_LENGTH + 1];
     bool seen_patient = false;
     bool seen_severity = false;
     bool seen_sulking = false;
     bool seen_target = false;
     size_t source_length;
+    unsigned int default_fields = 0;
 
     if (source == NULL || input == NULL) {
         return false;
     }
     source_length = strlen(source);
-    if (source_length == 0 || source_length > MAX_SOURCE_LENGTH) {
+    if (source_length > MAX_SOURCE_LENGTH) {
         return false;
     }
 
@@ -82,6 +95,7 @@ static bool parse_source(const char *source, Input *input) {
     };
     memcpy(buffer, source, source_length + 1);
 
+    /* Empty and whitespace-only input keeps defaults and reports them below. */
     for (char *token = strtok(buffer, " \t\r\n"); token != NULL;
          token = strtok(NULL, " \t\r\n")) {
         char *equals = strchr(token, '=');
@@ -128,14 +142,59 @@ static bool parse_source(const char *source, Input *input) {
             return false;
         }
     }
+
+    if (!seen_patient) {
+        default_fields |= DEFAULT_PATIENT;
+    }
+    if (!seen_severity) {
+        default_fields |= DEFAULT_SEVERITY;
+    }
+    if (!seen_sulking) {
+        default_fields |= DEFAULT_SULKING;
+    }
+    if (!seen_target) {
+        default_fields |= DEFAULT_TARGET;
+    }
+
+    /* Reporting stays opt-in through the hook; parsing itself remains silent. */
+    if (default_fields != 0 && defaults_hook != NULL) {
+        defaults_hook(default_fields, hook_context);
+    }
     return true;
+}
+
+static bool append_source_fragment(char *destination, size_t *length,
+                                  const char *fragment) {
+    size_t fragment_length;
+    size_t separator_length;
+
+    if (destination == NULL || length == NULL || fragment == NULL) {
+        return false;
+    }
+    fragment_length = strlen(fragment);
+    separator_length = *length == 0 ? 0 : 1;
+    if (fragment_length > MAX_SOURCE_LENGTH - *length - separator_length) {
+        return false;
+    }
+    if (separator_length != 0) {
+        destination[(*length)++] = ' ';
+    }
+    memcpy(destination + *length, fragment, fragment_length + 1);
+    *length += fragment_length;
+    return true;
+}
+
+static void notify_defaults(unsigned int default_fields, void *context) {
+    (void)context;
+    fprintf(stderr, "DEFAULTS_USED=0x%02X\n", default_fields);
 }
 
 static void print_usage(const char *program) {
     fprintf(stderr,
         "Usage: %s [patient-id [severity]]\n"
-        "       %s --source 'patient=ID severity=0.0 sulking=false target=c|java'\n",
-        program, program);
+        "       %s --source 'patient=ID severity=0.0 sulking=false target=c|java'\n"
+        "       %s --source-append 'field=value' ['field=value' ...]\n",
+        program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -145,12 +204,29 @@ int main(int argc, char **argv) {
         .sulking = false,
         .target = TARGET_C
     };
+    char appended_source[MAX_SOURCE_LENGTH + 1] = "";
+    size_t appended_length = 0;
+    const char *source = NULL;
 
-    if (argc == 3 && strcmp(argv[1], "--source") == 0) {
-        if (!parse_source(argv[2], &input)) {
-            fprintf(stderr, "Invalid source input; expected bounded key=value fields.\n");
+    if (argc >= 2 && strcmp(argv[1], "--source") == 0) {
+        if (argc != 3) {
+            print_usage(argv[0]);
             return EXIT_FAILURE;
         }
+        source = argv[2];
+    } else if (argc >= 2 && strcmp(argv[1], "--source-append") == 0) {
+        if (argc < 3) {
+            print_usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+        for (int i = 2; i < argc; ++i) {
+            if (!append_source_fragment(appended_source, &appended_length, argv[i])) {
+                fprintf(stderr, "Appended source exceeds the %d-byte limit.\n",
+                        MAX_SOURCE_LENGTH);
+                return EXIT_FAILURE;
+            }
+        }
+        source = appended_source;
     } else {
         if (argc > 3) {
             print_usage(argv[0]);
@@ -168,6 +244,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Severity must be a finite number from 0.0 to 1.0.\n");
             return EXIT_FAILURE;
         }
+    }
+
+    if (source != NULL && !parse_source(source, &input, notify_defaults, NULL)) {
+        fprintf(stderr, "Invalid source input; expected bounded key=value fields.\n");
+        return EXIT_FAILURE;
     }
 
     printf("Patient: %s\nSeverity: %.2f\nTarget: %s\n",
